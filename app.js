@@ -16,6 +16,7 @@ const CFG_PADRAO = {
   glic_max: 250, glic_min: 70,
   medicoes_agenda: [{ tipo: "glicemia", hora: "07:00", momento: "jejum" }, { tipo: "pressao", hora: "09:00" }],
   nome_filho: "Gabriel",
+  nome_pai: "",
   telefone_filho: "",
   resumo_semanal: true,
   estoque_dias_alerta: 7,
@@ -149,6 +150,9 @@ const S = {
   rel: null,
   modal: null,
   telaAjustesPai: false,
+  telaRelPai: false,
+  relTipo: null, // "acomp" | "medico" | "compras"
+  comprasFiltro: "acabando",
 };
 
 /* ============================ Inicialização ============================ */
@@ -189,7 +193,7 @@ async function recarregar(silencioso = false) {
     let [meds, cfg, doses, medicoes] = await Promise.all([S.api.meds(!completo), S.api.cfg(), S.api.doses(h, h), S.api.medicoes(h, h)]);
     if (!completo) meds = meds.map((m) => ({ ...m, foto: S.meds.find((x) => x.id === m.id)?.foto ?? null }));
     Object.assign(S, { meds, cfg, dosesHoje: doses, medicoesHoje: medicoes });
-    if (S.papel === "filho" && S.aba === "relatorios") await carregarRelatorio();
+    if ((S.papel === "filho" && S.aba === "relatorios") || S.telaRelPai) await carregarRelatorio();
     render();
   } catch (e) {
     if (!silencioso) telaErro("Não consegui carregar os dados.", e);
@@ -286,7 +290,7 @@ const SELO = { ok: ["ok", "✅ Tomou"], atrasado: ["atrasado", "⏰ Atrasado"], 
 /* ============================ Render ============================ */
 function render() {
   if (!S.papel) return telaPapel();
-  const html = S.papel === "pai" ? (S.telaAjustesPai ? viewAjustes(true) : viewPai()) : viewFilho();
+  const html = S.papel === "pai" ? (S.telaAjustesPai ? viewAjustes(true) : S.telaRelPai ? viewRelatorios() : viewPai()) : viewFilho();
   $("#app").innerHTML = html + (S.modal ? viewModal() : "");
   ligarEventos();
   document.querySelectorAll(".ag-tipo").forEach((sel) => (sel.onchange = () => { $(".ag-momento", sel.parentElement).hidden = sel.value !== "glicemia"; }));
@@ -363,6 +367,7 @@ function viewPai() {
     <button class="btn" data-a="modal" data-m="glicemia"><span>🩸</span><span>Medir glicemia</span></button>
   </div>`;
   if (S.cfg.telefone_filho) h += `<a class="btn ligar" href="${esc(telLink(S.cfg.telefone_filho))}">📞 Ligar para ${esc(S.cfg.nome_filho || "o filho")}</a>`;
+  h += `<button class="btn mt" data-a="abrirRelPai">📄 Relatórios <span class="sub">(médico e compras)</span></button>`;
   h += blocoMedicoesHoje(false, ag.length ? "Valores registrados hoje" : "Medições de hoje");
   return h;
 }
@@ -493,7 +498,18 @@ function grafico(series, { limites = [], unidade = "" } = {}) {
 const media = (a) => (a.length ? Math.round(a.reduce((s, x) => s + x, 0) / a.length) : null);
 
 function viewRelatorios() {
-  let h = `<header class="topo"><div><div class="ola">Relatórios</div><div class="data nao-imprimir">Remédios, pressão e glicemia</div></div></header>`;
+  const doPai = S.papel === "pai";
+  const tipos = doPai ? [["medico", "🩺 Para o médico"], ["compras", "📦 Compras"]] : [["acomp", "📊 Acompanhamento"], ["medico", "🩺 Para o médico"], ["compras", "📦 Compras"]];
+  if (!S.relTipo || !tipos.some(([k]) => k === S.relTipo)) S.relTipo = tipos[0][0];
+  let h = `<header class="topo nao-imprimir"><div><div class="ola">Relatórios</div></div>${doPai ? `<button class="icone-btn" data-a="fecharRelPai" aria-label="Voltar">✕</button>` : ""}</header>`;
+  h += `<div class="chips abas-rel">` + tipos.map(([k, v]) => `<button class="chip ${S.relTipo === k ? "ativo" : ""}" data-a="relTipo" data-v="${k}">${v}</button>`).join("") + `</div>`;
+  if (S.relTipo === "compras") return h + viewRelCompras();
+  if (S.relTipo === "medico") return h + viewRelMedico();
+  return h + viewRelAcomp();
+}
+
+function viewRelAcomp() {
+  let h = "";
   h += `<div class="chips">` + [7, 30, 90].map((n) => `<button class="chip ${S.relDias === n ? "ativo" : ""}" data-a="relDias" data-v="${n}">${n} dias</button>`).join("") + `</div>`;
   if (!S.rel) return h + `<div class="cartao vazio">Carregando…</div>`;
   const { de, ate, medicoes } = S.rel;
@@ -529,6 +545,97 @@ function viewRelatorios() {
   }
   h += `<button class="btn primario nao-imprimir" data-a="imprimir">📄 Gerar PDF / Imprimir</button>
     <p class="sub centro nao-imprimir mt">No iPhone: toque em Gerar PDF → Compartilhar (↑) → Salvar em Arquivos ou enviar pelo WhatsApp.</p>`;
+  return h;
+}
+
+/* ---------- Relatório para o médico ---------- */
+function resumoValores(lista) {
+  if (!lista.length) return null;
+  return { media: media(lista), min: Math.min(...lista), max: Math.max(...lista) };
+}
+function viewRelMedico() {
+  let h = `<div class="chips">` + [[30, "Últimos 30 dias"], [90, "Últimos 3 meses"]].map(([n, t]) => `<button class="chip ${S.relDias === n ? "ativo" : ""}" data-a="relDias" data-v="${n}">${t}</button>`).join("") + `</div>`;
+  if (!S.rel || (S.relDias !== 30 && S.relDias !== 90)) return h + `<div class="cartao vazio">Escolha o período acima.</div>`;
+  const { de, ate, medicoes } = S.rel;
+  const c = S.cfg;
+  h += `<div class="rel-cab"><h2 style="margin:0">Relatório de saúde${c.nome_pai ? ` — ${esc(c.nome_pai)}` : ""}</h2>
+    <p class="sub" style="margin:4px 0 0">Período: ${dataCurta(de)}/${de.slice(0, 4)} a ${dataCurta(ate)}/${ate.slice(0, 4)} · gerado em ${new Date().toLocaleDateString("pt-BR", { timeZone: TZ })}</p></div>`;
+
+  // Remédios em uso
+  h += `<div class="cartao"><h3>💊 Remédios em uso</h3><table class="adesao rel-tab"><thead><tr><th>Remédio</th><th>Dose</th><th>Quando</th></tr></thead><tbody>` +
+    PERIODOS.flatMap((p) => S.meds.filter((m) => m.periodo === p.id).map((m) => `<tr><td>${esc(m.nome)}</td><td>${esc(m.dose || "–")}</td><td>${p.nome} (${fmtHora(c.horarios[p.id])})</td></tr>`)).join("") +
+    `</tbody></table>`;
+  const ad = calcAdesao();
+  if (ad.pct !== null) h += `<p class="mt" style="margin-bottom:0">Remédios tomados no período: <b>${ad.pct}%</b> das doses previstas.</p>`;
+  h += `</div>`;
+
+  // Pressão
+  const pa = medicoes.filter((m) => m.tipo === "pressao");
+  const sis = resumoValores(pa.map((m) => m.sistolica)), dia = resumoValores(pa.map((m) => m.diastolica));
+  const pt = (m, y) => ({ x: new Date(m.criado_em).getTime(), y, fora: foraDaFaixa(m) });
+  h += `<div class="cartao grafico"><h3>❤️ Pressão arterial (${pa.length} medições)</h3>`;
+  if (pa.length) {
+    h += `<table class="adesao rel-tab"><thead><tr><th></th><th>Média</th><th>Menor</th><th>Maior</th></tr></thead><tbody>
+      <tr><td>Máxima (sistólica)</td><td><b>${sis.media}</b></td><td>${sis.min}</td><td>${sis.max}</td></tr>
+      <tr><td>Mínima (diastólica)</td><td><b>${dia.media}</b></td><td>${dia.min}</td><td>${dia.max}</td></tr></tbody></table>
+      <p class="sub">Fora da faixa de alerta: ${pa.filter((m) => foraDaFaixa(m)).length} de ${pa.length} medições.</p>` +
+      grafico([{ cor: "#c2410c", pontos: pa.map((m) => pt(m, m.sistolica)) }, { cor: "#2458a6", pontos: pa.map((m) => pt(m, m.diastolica)) }], { limites: [{ y: c.pa_sis_max }], unidade: "mmHg" }) +
+      `<div class="legenda"><span><i style="background:#c2410c"></i>Máxima</span><span><i style="background:#2458a6"></i>Mínima</span></div>`;
+  } else h += `<div class="vazio">Nenhuma medição no período.</div>`;
+  h += `</div>`;
+
+  // Glicemia
+  const gl = medicoes.filter((m) => m.tipo === "glicemia");
+  const g = resumoValores(gl.map((m) => m.glicemia));
+  h += `<div class="cartao grafico"><h3>🩸 Glicemia (${gl.length} medições)</h3>`;
+  if (gl.length) {
+    const porMomento = Object.entries(MOMENTOS).map(([k, v]) => [v, resumoValores(gl.filter((m) => m.momento === k).map((m) => m.glicemia))]).filter(([, r]) => r);
+    h += `<table class="adesao rel-tab"><thead><tr><th></th><th>Média</th><th>Menor</th><th>Maior</th></tr></thead><tbody>
+      <tr><td><b>Todas</b></td><td><b>${g.media}</b></td><td>${g.min}</td><td>${g.max}</td></tr>` +
+      porMomento.map(([v, r]) => `<tr><td>${v}</td><td>${r.media}</td><td>${r.min}</td><td>${r.max}</td></tr>`).join("") +
+      `</tbody></table><p class="sub">Valores em mg/dL. Fora da faixa de alerta: ${gl.filter((m) => foraDaFaixa(m)).length} de ${gl.length} medições.</p>` +
+      grafico([{ cor: "#0f6e64", pontos: gl.map((m) => pt(m, m.glicemia)) }], { limites: [{ y: c.glic_max }, { y: c.glic_min }], unidade: "mg/dL" });
+  } else h += `<div class="vazio">Nenhuma medição no período.</div>`;
+  h += `</div>`;
+
+  // Tabela completa
+  if (medicoes.length) {
+    h += `<div class="cartao"><h3>Todas as medições</h3><table class="adesao rel-tab"><thead><tr><th>Data e hora</th><th>Tipo</th><th>Valor</th></tr></thead><tbody>` +
+      [...medicoes].reverse().map((m) => `<tr><td>${new Date(m.criado_em).toLocaleString("pt-BR", { timeZone: TZ, day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</td>
+        <td>${m.tipo === "pressao" ? "Pressão" : "Glicemia"}</td><td class="${foraDaFaixa(m) ? "c-nao" : ""}">${m.tipo === "pressao" ? `${m.sistolica} × ${m.diastolica}${m.pulso ? ` · ${m.pulso} bpm` : ""}` : `${m.glicemia} mg/dL · ${esc((MOMENTOS[m.momento] || "").toLowerCase())}`}</td></tr>`).join("") +
+      `</tbody></table></div>`;
+  }
+  h += `<button class="btn primario nao-imprimir" data-a="imprimir">📄 Gerar PDF / Imprimir</button>
+    <p class="sub centro nao-imprimir mt">No iPhone: toque em Gerar PDF → Compartilhar (↑) → Salvar em Arquivos ou enviar pelo WhatsApp.</p>`;
+  return h;
+}
+
+/* ---------- Lista de compras ---------- */
+function listaCompras() {
+  const lim = +S.cfg.estoque_dias_alerta || 7;
+  const todos = PERIODOS.flatMap((p) => S.meds.filter((m) => m.periodo === p.id));
+  const lista = S.comprasFiltro === "todos" ? todos : todos.filter((m) => { const d = diasEstoque(m); return d !== null && d <= lim; });
+  return { lim, lista, semControle: todos.filter((m) => m.estoque == null).length };
+}
+function viewRelCompras() {
+  const { lim, lista, semControle } = listaCompras();
+  let h = `<div class="chips">
+    <button class="chip ${S.comprasFiltro === "acabando" ? "ativo" : ""}" data-a="comprasFiltro" data-v="acabando">Só os que estão acabando</button>
+    <button class="chip ${S.comprasFiltro === "todos" ? "ativo" : ""}" data-a="comprasFiltro" data-v="todos">Todos os remédios</button></div>`;
+  h += `<div class="rel-cab"><h2 style="margin:0">📦 Lista de compras${S.cfg.nome_pai ? ` — ${esc(S.cfg.nome_pai)}` : ""}</h2>
+    <p class="sub" style="margin:4px 0 0">${S.comprasFiltro === "todos" ? "Todos os remédios" : `Remédios com estoque para ${lim} dias ou menos`} · ${new Date().toLocaleDateString("pt-BR", { timeZone: TZ })}</p></div>`;
+  if (!lista.length) {
+    h += `<div class="cartao vazio">${S.comprasFiltro === "todos" ? "Nenhum remédio cadastrado." : "Nenhum remédio acabando. 👍"}${semControle && S.comprasFiltro !== "todos" ? `<br><span class="sub">${semControle} remédio(s) sem estoque informado não entram nesta lista — veja em "Todos os remédios".</span>` : ""}</div>`;
+    return h;
+  }
+  h += `<div class="cartao"><ul class="lista-compras">` + lista.map((m) => {
+    const d = diasEstoque(m);
+    const info = m.estoque == null ? `<span class="sub">estoque não informado</span>` : `<span class="${d <= lim ? "estoque-baixo" : "sub"}">${+m.estoque} comp. · dá para ${d} dia${d === 1 ? "" : "s"}</span>`;
+    return `<li><span class="quadrado"></span>${fotoHTML(m, "m-foto peq")}<span class="lc-txt"><b>${esc(m.nome)}</b> <span class="sub">${esc(m.dose || "")}</span><br>${info}</span></li>`;
+  }).join("") + `</ul></div>`;
+  h += `<div class="nao-imprimir" style="display:grid;gap:10px">
+    <button class="btn primario" data-a="compartilharCompras">💬 Enviar lista (WhatsApp, mensagem…)</button>
+    <button class="btn" data-a="imprimir">📄 Gerar PDF / Imprimir</button></div>`;
   return h;
 }
 
@@ -570,6 +677,10 @@ function viewAjustes(doPai) {
     </div>`).join("") +
     `<p class="sub">"Em jejum", "Depois de comer" etc. vale só para a glicemia.</p>
     <div class="linha-acao"><button class="btn pequeno" data-a="addAgenda">＋ Adicionar horário</button><button class="btn primario pequeno" data-a="salvarCfg">Salvar</button></div></div>`;
+
+  h += `<h2>Nome do paciente</h2><div class="cartao">
+      <label class="campo"><span>Aparece no topo dos relatórios</span><input type="text" data-cfg-txt="nome_pai" value="${esc(c.nome_pai || "")}" placeholder="Ex.: José da Silva"></label>
+      <button class="btn primario pequeno" data-a="salvarCfg">Salvar</button></div>`;
 
   h += `<h2>Botão "Ligar" na tela do pai</h2><div class="cartao"><div>
       <label class="campo"><span>Nome no botão</span><input type="text" data-cfg-txt="nome_filho" value="${esc(c.nome_filho || "")}"></label>
@@ -700,6 +811,25 @@ const ACOES = {
   ajustesPai() { S.telaAjustesPai = true; render(); window.scrollTo(0, 0); },
   voltarPai() { S.telaAjustesPai = false; render(); window.scrollTo(0, 0); },
   async aba(el) { S.aba = el.dataset.v; render(); window.scrollTo(0, 0); if (S.aba === "relatorios") { await carregarRelatorio(); render(); } },
+  async abrirRelPai() { S.telaRelPai = true; S.relTipo = "medico"; if (S.relDias < 30) S.relDias = 30; S.rel = null; render(); window.scrollTo(0, 0); await carregarRelatorio(); render(); },
+  fecharRelPai() { S.telaRelPai = false; render(); window.scrollTo(0, 0); },
+  async relTipo(el) {
+    S.relTipo = el.dataset.v;
+    if (S.relTipo === "medico" && S.relDias !== 30 && S.relDias !== 90) { S.relDias = 30; S.rel = null; render(); await carregarRelatorio(); }
+    render();
+  },
+  comprasFiltro(el) { S.comprasFiltro = el.dataset.v; render(); },
+  async compartilharCompras() {
+    const { lista } = listaCompras();
+    const txt = `Lista de compras${S.cfg.nome_pai ? " — " + S.cfg.nome_pai : ""}:\n` + lista.map((m) => {
+      const d = diasEstoque(m);
+      return `• ${m.nome}${m.dose ? " " + m.dose : ""}${m.estoque != null ? ` (restam ${+m.estoque}, ~${d} dias)` : ""}`;
+    }).join("\n");
+    try {
+      if (navigator.share) await navigator.share({ text: txt });
+      else { await navigator.clipboard.writeText(txt); toast("Lista copiada ✅"); }
+    } catch (e) { if (e.name !== "AbortError") toast("Não deu para compartilhar"); }
+  },
   async atualizar() { await recarregar(); toast("Atualizado"); },
   async relDias(el) { S.relDias = +el.dataset.v; S.rel = null; render(); await carregarRelatorio(); render(); },
   imprimir() { window.print(); },

@@ -197,3 +197,18 @@ input, select { min-width: 0; max-width: 100%; }
 input[type=time] { -webkit-appearance: none; appearance: none; padding: 10px 8px; }
 .ag-edit [hidden] { display: none; }
 @media (max-width: 420px) { .ag-edit { grid-template-columns: 1fr 1fr auto; } .ag-edit .ag-momento { grid-column: 1 / 3; grid-row: 2; } }
+
+/* ---- Relatórios: médico e compras ---- */
+.abas-rel .chip { font-size: 16px; }
+.rel-cab { margin: 6px 4px 14px; }
+.rel-tab td, .rel-tab th { text-align: left !important; }
+.rel-tab td + td, .rel-tab th + th { text-align: center !important; }
+.lista-compras { list-style: none; margin: 0; padding: 0; }
+.lista-compras li { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--linha); font-size: 19px; }
+.lista-compras li:first-child { border-top: 0; }
+.quadrado { width: 24px; height: 24px; border: 2.5px solid #9aa39f; border-radius: 6px; flex: none; }
+.lc-txt { flex: 1; min-width: 0; }
+@media print {
+  .rel-cab h2 { font-size: 18pt; }
+  .grafico svg { max-height: 220px; }
+}
