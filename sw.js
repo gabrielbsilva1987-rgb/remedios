@@ -1,5 +1,5 @@
 // Service worker: notificações com o app fechado + funcionamento básico offline
-const CACHE = "remedios-v7";
+const CACHE = "remedios-v8";
 const ARQUIVOS = ["./", "./index.html", "./app.js", "./styles.css", "./config.js", "./manifest.json", "./icon-192.png", "./vendor/html2canvas.min.js", "./vendor/jspdf.umd.min.js"];
 
 self.addEventListener("install", (e) => {

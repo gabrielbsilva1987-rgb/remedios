@@ -17,6 +17,7 @@ const CFG_PADRAO = {
   medicoes_agenda: [{ tipo: "glicemia", hora: "07:00", momento: "jejum" }, { tipo: "pressao", hora: "09:00" }],
   nome_filho: "Gabriel",
   nome_pai: "",
+  nome_tela: "Luiz",
   telefone_filho: "",
   resumo_semanal: true,
   estoque_dias_alerta: 7,
@@ -340,7 +341,7 @@ function faixaNotificacoes() {
 /* ---------- Tela do Pai ---------- */
 function viewPai() {
   const foco = S.aberto || periodoFoco();
-  let h = `<header class="topo"><div><div class="ola">Olá! 👋</div><div class="data">${esc(dataLonga())}</div></div>
+  let h = `<header class="topo"><div><div class="ola">${S.cfg.nome_tela ? `Olá, ${esc(S.cfg.nome_tela)}` : "Olá!"} 👋</div><div class="data">${esc(dataLonga())}</div></div>
     <button class="icone-btn" data-a="ajustesPai" aria-label="Ajustes">⚙️</button></header>`;
   h += faixaNotificacoes();
   for (const p of PERIODOS) {
@@ -697,7 +698,8 @@ function viewAjustes(doPai) {
     <div class="linha-acao"><button class="btn pequeno" data-a="addAgenda">＋ Adicionar horário</button><button class="btn primario pequeno" data-a="salvarCfg">Salvar</button></div></div>`;
 
   h += `<h2>Nome do paciente</h2><div class="cartao">
-      <label class="campo"><span>Aparece no topo dos relatórios</span><input type="text" data-cfg-txt="nome_pai" value="${esc(c.nome_pai || "")}" placeholder="Ex.: José da Silva"></label>
+      <label class="campo"><span>Como aparece na tela dele ("Olá, …")</span><input type="text" data-cfg-txt="nome_tela" value="${esc(c.nome_tela || "")}" placeholder="Ex.: Luiz"></label>
+      <label class="campo"><span>Nome completo (aparece no topo dos relatórios)</span><input type="text" data-cfg-txt="nome_pai" value="${esc(c.nome_pai || "")}" placeholder="Ex.: Luiz da Silva"></label>
       <button class="btn primario pequeno" data-a="salvarCfg">Salvar</button></div>`;
 
   h += `<h2>Botão "Ligar" na tela do pai</h2><div class="cartao"><div>
