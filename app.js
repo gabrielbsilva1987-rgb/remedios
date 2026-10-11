@@ -183,8 +183,19 @@ async function iniciar() {
   }
   if (!S.papel) return telaPapel();
   await recarregar();
+  if (CONFIGURADO) ligarTempoReal();
   setInterval(() => { if (!S.modal && document.visibilityState === "visible") recarregar(true); }, 60000);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && !S.modal) recarregar(true); });
+}
+
+/* Tempo real: qualquer "Tomei" ou medição nova atualiza a tela na hora */
+function ligarTempoReal() {
+  let t;
+  const atualizar = () => { clearTimeout(t); t = setTimeout(() => { if (!S.modal) recarregar(true); }, 400); };
+  S.sb.channel("mudancas")
+    .on("postgres_changes", { event: "*", schema: "public", table: "doses" }, atualizar)
+    .on("postgres_changes", { event: "*", schema: "public", table: "medicoes" }, atualizar)
+    .subscribe((status) => { S.aoVivo = status === "SUBSCRIBED"; const el = $("#aoVivo"); if (el) el.hidden = !S.aoVivo; });
 }
 
 async function recarregar(silencioso = false) {
@@ -211,8 +222,8 @@ function telaErro(msg, e) {
 
 function telaLogin() {
   $("#app").innerHTML = `
-    <img src="icon-192.png?v=4" alt="" style="display:block;width:96px;height:96px;border-radius:22px;margin:8px auto 12px;box-shadow:0 4px 14px rgba(0,0,0,.15)">
-    <h1 class="centro" style="margin:0 0 6px">ColegaMed</h1>
+    <div class="logo">💊</div>
+    <h1 class="centro" style="margin:0 0 6px">Remédios</h1>
     <p class="centro sub">Entre com o seu e-mail e a sua senha.<br>Isso só é pedido uma vez neste celular.</p>
     <form id="fLogin" class="cartao mt">
       <label class="campo"><span>E-mail</span><input type="email" name="email" autocomplete="username" required></label>
@@ -317,7 +328,7 @@ function faixaNotificacoes() {
     return `<div class="faixa aviso"><b>Este navegador não recebe notificações</b>Use o Safari no iPhone (iOS 16.4 ou mais novo) e abra pelo ícone da Tela de Início.</div>`;
   }
   if (Notification.permission === "denied") {
-    return `<div class="faixa aviso"><b>As notificações estão bloqueadas</b>Vá em Ajustes do iPhone → Notificações → ColegaMed e ative "Permitir Notificações".</div>`;
+    return `<div class="faixa aviso"><b>As notificações estão bloqueadas</b>Vá em Ajustes do iPhone → Notificações → Remédios e ative "Permitir Notificações".</div>`;
   }
   if (Notification.permission !== "granted" || !lerLocal("push_ok", false)) {
     return `<div class="faixa info"><b>Ative os lembretes</b>${S.papel === "pai" ? "Assim o celular avisa na hora de cada remédio, mesmo bloqueado." : "Assim você é avisado quando seu pai tomar, atrasar ou medir."}
@@ -406,7 +417,7 @@ function viewFilho() {
 }
 
 function viewFilhoHoje() {
-  let h = `<header class="topo"><div><div class="ola">Hoje do Pai</div><div class="data">${esc(dataLonga())}</div></div>
+  let h = `<header class="topo"><div><div class="ola">Hoje do Pai <span id="aoVivo" class="ao-vivo" ${S.aoVivo ? "" : "hidden"}>● ao vivo</span></div><div class="data">${esc(dataLonga())}</div></div>
     <button class="icone-btn" data-a="atualizar" aria-label="Atualizar">🔄</button></header>`;
   h += faixaNotificacoes();
   const baixos = S.meds.filter((m) => { const d = diasEstoque(m); return d !== null && d <= (+S.cfg.estoque_dias_alerta || 7); });
@@ -435,7 +446,7 @@ function viewFilhoHoje() {
     }).join("") + `</div>`;
   }
   h += blocoMedicoesHoje(true, "Valores de hoje");
-  h += `<p class="sub centro mt">Atualiza sozinho a cada minuto.</p>`;
+  h += `<p class="sub centro mt">${S.aoVivo ? "🟢 Ao vivo — atualiza na hora em que ele marcar." : "Atualiza sozinho a cada minuto."}</p>`;
   return h;
 }
 

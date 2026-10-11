@@ -31,9 +31,9 @@ self.addEventListener("fetch", (e) => {
 
 self.addEventListener("push", (e) => {
   let d = {};
-  try { d = e.data ? e.data.json() : {}; } catch { d = { titulo: "ColegaMed", corpo: e.data ? e.data.text() : "" }; }
+  try { d = e.data ? e.data.json() : {}; } catch { d = { titulo: "Remédios", corpo: e.data ? e.data.text() : "" }; }
   e.waitUntil(
-    self.registration.showNotification(d.titulo || "ColegaMed", {
+    self.registration.showNotification(d.titulo || "Remédios", {
       body: d.corpo || "",
       icon: "icon-192.png",
       badge: "icon-192.png",

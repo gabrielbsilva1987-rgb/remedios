@@ -226,3 +226,5 @@ body.modo-pdf main { width: 760px; max-width: 760px; padding: 0; margin: 0; }
 body.modo-pdf .nao-imprimir, body.modo-pdf .abas, body.modo-pdf .chips, body.modo-pdf #toast, body.modo-pdf .nao-sel { display: none !important; }
 body.modo-pdf .so-impressao { display: block; }
 body.modo-pdf .cartao, body.modo-pdf .tile { box-shadow: none; }
+.ao-vivo { font-size: 13px; font-weight: 700; color: var(--ok); background: var(--ok-claro); padding: 3px 9px; border-radius: 99px; vertical-align: middle; letter-spacing: 0; }
+.ao-vivo[hidden] { display: none; }
