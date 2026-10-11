@@ -144,6 +144,13 @@ async function iniciar() {
       S.api = apiSupabase(S.sb);
       const { data } = await S.sb.auth.getSession();
       if (!data.session) return telaLogin();
+      // O papel (pai/filho) vem do banco, de acordo com o usuário que entrou
+      const { data: perfil, error: ePerfil } = await S.sb.from("perfis").select("papel").eq("user_id", data.session.user.id).maybeSingle();
+      if (ePerfil) throw ePerfil;
+      if (!perfil) return telaSemPerfil(data.session.user.email);
+      S.papel = perfil.papel;
+      S.email = data.session.user.email;
+      gravarLocal("papel", S.papel);
     } catch (e) {
       return telaErro("Não consegui conectar ao servidor. Verifique a internet e tente de novo.", e);
     }
@@ -179,7 +186,7 @@ function telaLogin() {
   $("#app").innerHTML = `
     <div class="logo">💊</div>
     <h1 class="centro" style="margin:0 0 6px">Remédios</h1>
-    <p class="centro sub">Entre com o e-mail e a senha da família.<br>Isso só é pedido uma vez neste celular.</p>
+    <p class="centro sub">Entre com o seu e-mail e a sua senha.<br>Isso só é pedido uma vez neste celular.</p>
     <form id="fLogin" class="cartao mt">
       <label class="campo"><span>E-mail</span><input type="email" name="email" autocomplete="username" required></label>
       <label class="campo"><span>Senha</span><input type="password" name="senha" autocomplete="current-password" required></label>
@@ -194,6 +201,13 @@ function telaLogin() {
     if (error) { btn.disabled = false; btn.textContent = "Entrar"; return toast("E-mail ou senha incorretos"); }
     iniciar();
   };
+}
+
+function telaSemPerfil(email) {
+  $("#app").innerHTML = `<div class="logo">🔒</div><div class="cartao centro"><h3>Usuário sem perfil</h3>
+    <p class="sub">O usuário ${esc(email)} ainda não foi definido como Pai ou Filho no banco de dados (Guia, passo 3).</p>
+    <button class="btn" id="bSair">Sair</button></div>`;
+  $("#bSair").onclick = async () => { await S.sb.auth.signOut(); localStorage.removeItem("papel"); location.reload(); };
 }
 
 function telaPapel() {
@@ -464,6 +478,13 @@ function viewAjustes(doPai) {
   if (CONFIGURADO && typeof Notification !== "undefined" && Notification.permission === "granted" && lerLocal("push_ok", false))
     h += `<button class="btn mt" data-a="testarPush">🔔 Enviar notificação de teste</button>`;
 
+  if (S.papel === "pai" && CONFIGURADO) {
+    h += `<h2>Remédios</h2><div class="cartao sub">A lista de remédios e os horários são ajustados pelo celular do filho.</div>`;
+    h += `<h2>Este celular</h2><div class="cartao"><p style="margin-top:0">Conectado como <b>Pai 👴</b>${S.email ? `<br><span class="sub">${esc(S.email)}</span>` : ""}</p>
+      <button class="btn pequeno perigo" data-a="sair">Sair da conta</button></div>`;
+    return h;
+  }
+
   h += `<h2>Horários dos remédios</h2><div class="cartao"><div class="grade3">` +
     PERIODOS.map((p) => `<label class="campo"><span>${p.emoji} ${p.nome}</span><input type="time" data-cfg-hora="${p.id}" value="${esc(c.horarios[p.id])}"></label>`).join("") +
     `</div><label class="campo"><span>Avisar o filho se atrasar (minutos)</span><input type="number" inputmode="numeric" data-cfg="atraso_min" value="${c.atraso_min}"></label>
@@ -489,9 +510,8 @@ function viewAjustes(doPai) {
     </div><button class="btn primario pequeno" data-a="salvarCfg">Salvar limites</button></div>`;
 
   h += `<h2>Este celular</h2><div class="cartao">
-    <p style="margin-top:0">Configurado como celular <b>${S.papel === "pai" ? "do Pai 👴" : "do Filho 👨"}</b>.</p>
-    <button class="btn pequeno" data-a="trocarPapel">Trocar (Pai / Filho)</button>
-    ${CONFIGURADO ? `<button class="btn pequeno perigo mt" data-a="sair">Sair da conta</button>` : ""}
+    <p style="margin-top:0">${CONFIGURADO ? "Conectado" : "Configurado"} como <b>${S.papel === "pai" ? "Pai 👴" : "Filho 👨"}</b>${S.email ? `<br><span class="sub">${esc(S.email)}</span>` : ""}</p>
+    ${CONFIGURADO ? `<button class="btn pequeno perigo" data-a="sair">Sair da conta</button>` : `<button class="btn pequeno" data-a="trocarPapel">Trocar (Pai / Filho) — só no modo demonstração</button>`}
   </div>`;
   return h;
 }
