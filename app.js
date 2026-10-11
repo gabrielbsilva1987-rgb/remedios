@@ -14,7 +14,13 @@ const CFG_PADRAO = {
   atraso_min: 30,
   pa_sis_max: 160, pa_sis_min: 90, pa_dia_max: 100,
   glic_max: 250, glic_min: 70,
+  medicoes_agenda: [{ tipo: "glicemia", hora: "07:00", momento: "jejum" }, { tipo: "pressao", hora: "09:00" }],
+  nome_filho: "Gabriel",
+  telefone_filho: "",
+  resumo_semanal: true,
+  estoque_dias_alerta: 7,
 };
+const TIPOS = { pressao: { nome: "Pressão", emoji: "❤️" }, glicemia: { nome: "Glicemia", emoji: "🩸" } };
 const CONFIGURADO = !!CONFIG.SUPABASE_URL && !CONFIG.SUPABASE_URL.includes("COLE_AQUI");
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -54,7 +60,10 @@ function gravarLocal(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); }
 function apiSupabase(sb) {
   const ok = ({ data, error }) => { if (error) throw error; return data; };
   return {
-    async meds() { return ok(await sb.from("medicamentos").select("*").eq("ativo", true).order("ordem").order("id")); },
+    async meds(semFoto = false) {
+      const cols = semFoto ? "id,nome,dose,periodo,ativo,ordem,estoque,por_dose" : "*";
+      return ok(await sb.from("medicamentos").select(cols).eq("ativo", true).order("ordem").order("id"));
+    },
     async salvarMed(m) {
       if (m.id) { const { id, ...r } = m; ok(await sb.from("medicamentos").update(r).eq("id", id)); }
       else ok(await sb.from("medicamentos").insert(m));
@@ -104,10 +113,19 @@ function apiLocal() {
     async doses(de, ate) { return L("doses").filter((d) => d.data >= de && d.data <= ate); },
     async marcar(lista) {
       const a = L("doses");
-      for (const d of lista) if (!a.some((x) => x.data === d.data && x.medicamento_id === d.medicamento_id)) a.push({ ...d, id: nid(a), tomado_em: new Date().toISOString() });
-      G("doses", a);
+      const ms = L("meds");
+      for (const d of lista) if (!a.some((x) => x.data === d.data && x.medicamento_id === d.medicamento_id)) {
+        a.push({ ...d, id: nid(a), tomado_em: new Date().toISOString() });
+        const m = ms.find((x) => x.id === d.medicamento_id);
+        if (m && m.estoque != null) m.estoque = Math.max(0, m.estoque - (m.por_dose || 1));
+      }
+      G("doses", a); G("meds", ms);
     },
-    async desmarcar(data, medId) { G("doses", L("doses").filter((x) => !(x.data === data && x.medicamento_id === medId))); },
+    async desmarcar(data, medId) {
+      G("doses", L("doses").filter((x) => !(x.data === data && x.medicamento_id === medId)));
+      const ms = L("meds"); const m = ms.find((x) => x.id === medId);
+      if (m && m.estoque != null) { m.estoque += m.por_dose || 1; G("meds", ms); }
+    },
     async addMedicao(m) { const a = L("medicoes"); a.push({ ...m, id: nid(a), criado_em: new Date().toISOString() }); G("medicoes", a); },
     async medicoes(de, ate) { return L("medicoes").filter((m) => { const d = diaSP(new Date(m.criado_em)); return d >= de && d <= ate; }); },
     async excluirMedicao(id) { G("medicoes", L("medicoes").filter((x) => x.id !== id)); },
@@ -166,7 +184,10 @@ async function iniciar() {
 async function recarregar(silencioso = false) {
   try {
     const h = hoje();
-    const [meds, cfg, doses, medicoes] = await Promise.all([S.api.meds(), S.api.cfg(), S.api.doses(h, h), S.api.medicoes(h, h)]);
+    // A lista de remédios (com fotos) só é recarregada por completo quando necessário, para economizar internet
+    const completo = !silencioso || !S.meds.length;
+    let [meds, cfg, doses, medicoes] = await Promise.all([S.api.meds(!completo), S.api.cfg(), S.api.doses(h, h), S.api.medicoes(h, h)]);
+    if (!completo) meds = meds.map((m) => ({ ...m, foto: S.meds.find((x) => x.id === m.id)?.foto ?? null }));
     Object.assign(S, { meds, cfg, dosesHoje: doses, medicoesHoje: medicoes });
     if (S.papel === "filho" && S.aba === "relatorios") await carregarRelatorio();
     render();
@@ -245,6 +266,21 @@ function periodoFoco() {
   const ests = PERIODOS.map((p) => ({ p, e: estadoPeriodo(p.id) })).filter((x) => x.e.st !== "vazio");
   return (ests.find((x) => x.e.st === "atrasado") || ests.find((x) => x.e.st === "agora") || ests.find((x) => x.e.st === "depois"))?.p.id || null;
 }
+function agendaMedicoes() {
+  const agora = minAgora(), atraso = +S.cfg.atraso_min || 30;
+  return (S.cfg.medicoes_agenda || []).filter((a) => a && a.hora && TIPOS[a.tipo]).map((a) => {
+    const t = hm2min(a.hora);
+    const feita = S.medicoesHoje.find((m) => m.tipo === a.tipo && hm2min(horaDe(m.criado_em)) >= t - 90);
+    const st = feita ? "ok" : agora >= t + atraso ? "atrasado" : agora >= t - 30 ? "agora" : "depois";
+    return { ...a, t, feita, st };
+  }).sort((x, y) => x.t - y.t);
+}
+const SELO_MED = { ok: ["ok", "✅ Feito"], atrasado: ["atrasado", "⏰ Atrasado"], agora: ["agora", "Agora"], depois: ["depois", "Mais tarde"] };
+const rotuloAgenda = (a) => `${TIPOS[a.tipo].emoji} ${TIPOS[a.tipo].nome}${a.tipo === "glicemia" && MOMENTOS[a.momento] ? ` <span class="sub">${esc(MOMENTOS[a.momento].toLowerCase())}</span>` : ""}`;
+function diasEstoque(m) { return m.estoque == null ? null : Math.floor(+m.estoque / (+m.por_dose || 1)); }
+const fotoHTML = (m, cls = "m-foto") => (m.foto ? `<img class="${cls}" src="${esc(m.foto)}" alt="">` : "");
+const telLink = (t) => "tel:" + String(t || "").replace(/[^\d+]/g, "");
+
 const SELO = { ok: ["ok", "✅ Tomou"], atrasado: ["atrasado", "⏰ Atrasado"], agora: ["agora", "Agora"], depois: ["depois", "Mais tarde"] };
 
 /* ============================ Render ============================ */
@@ -253,6 +289,13 @@ function render() {
   const html = S.papel === "pai" ? (S.telaAjustesPai ? viewAjustes(true) : viewPai()) : viewFilho();
   $("#app").innerHTML = html + (S.modal ? viewModal() : "");
   ligarEventos();
+  document.querySelectorAll(".ag-tipo").forEach((sel) => (sel.onchange = () => { $(".ag-momento", sel.parentElement).hidden = sel.value !== "glicemia"; }));
+  const f = $("#mFoto");
+  if (f) f.onchange = async () => {
+    if (!f.files?.[0]) return;
+    try { guardarCamposMed(); S.modal.foto = await reduzirFoto(f.files[0]); render(); }
+    catch (e) { toast(e.message); }
+  };
 }
 
 function faixaNotificacoes() {
@@ -296,7 +339,7 @@ function viewPai() {
       h += `<div class="p-corpo"><ul class="meds">` + e.meds.map((m) => {
         const d = e.doses.find((x) => x.medicamento_id === m.id);
         return `<li><button class="med ${d ? "marcado" : ""}" data-a="toggle" data-id="${m.id}" data-p="${p.id}">
-          <span class="caixa">${d ? "✓" : ""}</span>
+          <span class="caixa">${d ? "✓" : ""}</span>${fotoHTML(m)}
           <span class="m-txt"><span class="m-nome">${esc(m.nome)}</span>${m.dose ? `<span class="m-dose">${esc(m.dose)}</span>` : ""}</span>
           ${d ? `<span class="m-hora">${horaDe(d.tomado_em)}</span>` : ""}</button></li>`;
       }).join("") + `</ul>`;
@@ -307,11 +350,20 @@ function viewPai() {
     }
     h += `</section>`;
   }
+  const ag = agendaMedicoes();
+  if (ag.length) {
+    h += `<h2>Medições de hoje</h2><div class="cartao agenda">` + ag.map((a) => {
+      const [cls, txt] = SELO_MED[a.st];
+      return `<button class="ag-item ${a.st}" data-a="modal" data-m="${a.tipo}" data-momento="${esc(a.momento || "")}">
+        <span class="ag-nome">${rotuloAgenda(a)}</span><span class="p-hora">${fmtHora(a.hora)}</span><span class="selo ${cls}">${txt}</span></button>`;
+    }).join("") + `</div>`;
+  }
   h += `<div class="dupla">
     <button class="btn" data-a="modal" data-m="pressao"><span>❤️</span><span>Medir pressão</span></button>
     <button class="btn" data-a="modal" data-m="glicemia"><span>🩸</span><span>Medir glicemia</span></button>
   </div>`;
-  h += blocoMedicoesHoje();
+  if (S.cfg.telefone_filho) h += `<a class="btn ligar" href="${esc(telLink(S.cfg.telefone_filho))}">📞 Ligar para ${esc(S.cfg.nome_filho || "o filho")}</a>`;
+  h += blocoMedicoesHoje(false, ag.length ? "Valores registrados hoje" : "Medições de hoje");
   return h;
 }
 
@@ -323,9 +375,9 @@ function foraDaFaixa(m, c = S.cfg) {
   if (m.tipo === "pressao") return m.sistolica >= c.pa_sis_max || m.sistolica <= c.pa_sis_min || m.diastolica >= c.pa_dia_max;
   return m.glicemia >= c.glic_max || m.glicemia <= c.glic_min;
 }
-function blocoMedicoesHoje(comExcluir = false) {
-  if (!S.medicoesHoje.length) return `<h2>Medições de hoje</h2><div class="cartao vazio">Nenhuma medição ainda hoje.</div>`;
-  return `<h2>Medições de hoje</h2><div class="cartao"><ul class="lista-med">` +
+function blocoMedicoesHoje(comExcluir = false, titulo = "Medições de hoje") {
+  if (!S.medicoesHoje.length) return `<h2>${titulo}</h2><div class="cartao vazio">Nenhuma medição ainda hoje.</div>`;
+  return `<h2>${titulo}</h2><div class="cartao"><ul class="lista-med">` +
     [...S.medicoesHoje].reverse().map((m) => `<li><span>${m.tipo === "pressao" ? "❤️ Pressão" : "🩸 Glicemia"}<br><span class="sub">${horaDe(m.criado_em)}</span></span>
       <span class="valor ${foraDaFaixa(m) ? "fora" : ""}">${textoMedicao(m)}${foraDaFaixa(m) ? " ⚠️" : ""}</span>
       ${comExcluir ? `<button class="icone-btn" style="width:40px;height:40px;font-size:18px" data-a="excluirMedicao" data-id="${m.id}" aria-label="Excluir">🗑️</button>` : ""}</li>`).join("") +
@@ -350,6 +402,9 @@ function viewFilhoHoje() {
   let h = `<header class="topo"><div><div class="ola">Hoje do Pai</div><div class="data">${esc(dataLonga())}</div></div>
     <button class="icone-btn" data-a="atualizar" aria-label="Atualizar">🔄</button></header>`;
   h += faixaNotificacoes();
+  const baixos = S.meds.filter((m) => { const d = diasEstoque(m); return d !== null && d <= (+S.cfg.estoque_dias_alerta || 7); });
+  if (baixos.length) h += `<div class="faixa aviso"><b>📦 Estoque acabando</b>` + baixos.map((m) => `${esc(m.nome)}: ${+m.estoque} comp. (≈ ${diasEstoque(m)} dias)`).join("<br>") +
+    `<button class="btn pequeno" data-a="aba" data-v="ajustes">Atualizar estoque</button></div>`;
   for (const p of PERIODOS) {
     const e = estadoPeriodo(p.id);
     if (e.st === "vazio") continue;
@@ -359,13 +414,20 @@ function viewFilhoHoje() {
       <div class="p-corpo"><ul class="meds">` + e.meds.map((m) => {
         const d = e.doses.find((x) => x.medicamento_id === m.id);
         return `<li><div class="med ${d ? "marcado" : ""}" style="min-height:56px;padding:10px">
-          <span class="caixa" style="width:30px;height:30px;font-size:18px;border-radius:9px">${d ? "✓" : ""}</span>
+          <span class="caixa" style="width:30px;height:30px;font-size:18px;border-radius:9px">${d ? "✓" : ""}</span>${fotoHTML(m, "m-foto peq")}
           <span class="m-txt"><span class="m-nome" style="font-size:19px">${esc(m.nome)}</span>${m.dose ? `<span class="m-dose">${esc(m.dose)}</span>` : ""}</span>
           ${d ? `<span class="m-hora">${horaDe(d.tomado_em)}</span>` : `<span class="m-hora pend ${e.st === "atrasado" ? "atr" : ""}">${e.st === "atrasado" ? "não tomou" : "pendente"}</span>`}
         </div></li>`;
       }).join("") + `</ul></div></section>`;
   }
-  h += blocoMedicoesHoje(true);
+  const ag = agendaMedicoes();
+  if (ag.length) {
+    h += `<h2>Medições combinadas</h2><div class="cartao agenda">` + ag.map((a) => {
+      const [cls, txt] = SELO_MED[a.st];
+      return `<div class="ag-item ${a.st}"><span class="ag-nome">${rotuloAgenda(a)}</span><span class="p-hora">${fmtHora(a.hora)}</span><span class="selo ${cls}">${a.feita ? "✅ " + horaDe(a.feita.criado_em) : txt}</span></div>`;
+    }).join("") + `</div>`;
+  }
+  h += blocoMedicoesHoje(true, "Valores de hoje");
   h += `<p class="sub centro mt">Atualiza sozinho a cada minuto.</p>`;
   return h;
 }
@@ -494,10 +556,31 @@ function viewAjustes(doPai) {
   for (const p of PERIODOS) {
     const meds = S.meds.filter((m) => m.periodo === p.id);
     h += `<div class="cartao"><h3>${p.emoji} ${p.nome}</h3><ul class="lista-med">` +
-      (meds.map((m) => `<li><span><b>${esc(m.nome)}</b> <span class="sub">${esc(m.dose)}</span></span>
+      (meds.map((m) => `<li><span class="med-linha">${fotoHTML(m, "m-foto peq")}<span><b>${esc(m.nome)}</b> <span class="sub">${esc(m.dose)}</span>${m.estoque != null ? `<br><span class="sub ${diasEstoque(m) <= (+S.cfg.estoque_dias_alerta || 7) ? "estoque-baixo" : ""}">📦 ${+m.estoque} comp. · ≈ ${diasEstoque(m)} dias</span>` : ""}</span></span>
         <button class="icone-btn" style="width:44px;height:44px;font-size:18px" data-a="editarMed" data-id="${m.id}" aria-label="Editar">✏️</button></li>`).join("") || `<li class="vazio">Nenhum</li>`) +
       `</ul><button class="btn pequeno mt" data-a="novoMed" data-p="${p.id}">＋ Adicionar remédio</button></div>`;
   }
+
+  h += `<h2>Lembretes de medição</h2><div class="cartao"><p class="sub" style="margin-top:0">O pai recebe um lembrete no horário, e você é avisado se ele não medir.</p>` +
+    (c.medicoes_agenda || []).map((a, i) => `<div class="ag-edit" data-ag="${i}">
+      <select class="ag-tipo">${Object.entries(TIPOS).map(([k, v]) => `<option value="${k}" ${a.tipo === k ? "selected" : ""}>${v.emoji} ${v.nome}</option>`).join("")}</select>
+      <input class="ag-hora" type="time" value="${esc(a.hora)}">
+      <select class="ag-momento" ${a.tipo === "glicemia" ? "" : "hidden"}>${Object.entries(MOMENTOS).map(([k, v]) => `<option value="${k}" ${a.momento === k ? "selected" : ""}>${v}</option>`).join("")}</select>
+      <button class="icone-btn" style="width:44px;height:44px;font-size:18px" data-a="removerAgenda" data-i="${i}" aria-label="Remover">🗑️</button>
+    </div>`).join("") +
+    `<p class="sub">"Em jejum", "Depois de comer" etc. vale só para a glicemia.</p>
+    <div class="linha-acao"><button class="btn pequeno" data-a="addAgenda">＋ Adicionar horário</button><button class="btn primario pequeno" data-a="salvarCfg">Salvar</button></div></div>`;
+
+  h += `<h2>Botão "Ligar" na tela do pai</h2><div class="cartao"><div>
+      <label class="campo"><span>Nome no botão</span><input type="text" data-cfg-txt="nome_filho" value="${esc(c.nome_filho || "")}"></label>
+      <label class="campo"><span>Telefone (com DDD)</span><input type="tel" data-cfg-txt="telefone_filho" value="${esc(c.telefone_filho || "")}" placeholder="17 99999-9999"></label>
+    </div><button class="btn primario pequeno" data-a="salvarCfg">Salvar</button></div>`;
+
+  h += `<h2>Estoque e resumo</h2><div class="cartao">
+      <label class="campo"><span>Avisar quando o estoque der para menos de (dias)</span><input type="number" inputmode="numeric" data-cfg="estoque_dias_alerta" value="${c.estoque_dias_alerta}"></label>
+      <label class="check"><input type="checkbox" data-cfg-bool="resumo_semanal" ${c.resumo_semanal !== false ? "checked" : ""}> Receber resumo da semana todo domingo às 18h</label>
+      <p class="sub">O estoque de cada remédio é informado ao editar o remédio (✏️). Ele desconta sozinho a cada "Tomei".</p>
+      <button class="btn primario pequeno" data-a="salvarCfg">Salvar</button></div>`;
 
   h += `<h2>Limites para alerta</h2><div class="cartao"><p class="sub" style="margin-top:0">O filho recebe ⚠️ quando uma medição passar destes valores. Combine os números com o médico.</p>
     <div class="grade3">
@@ -541,6 +624,15 @@ function viewModal() {
       <label class="campo"><span>Nome</span><input id="mNome" type="text" value="${esc(med.nome || "")}" placeholder="Ex.: Losartana"></label>
       <label class="campo"><span>Dose</span><input id="mDose" type="text" value="${esc(med.dose || "")}" placeholder="Ex.: 50 mg"></label>
       <label class="campo"><span>Período</span><select id="mPer">${PERIODOS.map((p) => `<option value="${p.id}" ${med.periodo === p.id ? "selected" : ""}>${p.nome}</option>`).join("")}</select></label>
+      <div class="campo"><span class="sub">Foto da caixa ou do comprimido</span>
+        <div class="foto-campo">${m.foto ? `<img class="foto-prev" src="${esc(m.foto)}" alt="">` : `<div class="foto-prev vazia">📷</div>`}
+          <div class="foto-acoes"><label class="btn pequeno">${m.foto ? "Trocar foto" : "Tirar ou escolher foto"}<input id="mFoto" type="file" accept="image/*" hidden></label>
+          ${m.foto ? `<button class="btn pequeno perigo" data-a="removerFoto">Remover foto</button>` : ""}</div></div></div>
+      <div class="grade2">
+        <label class="campo"><span>Comprimidos em estoque</span><input id="mEst" type="number" inputmode="decimal" value="${med.estoque ?? ""}" placeholder="Ex.: 30"></label>
+        <label class="campo"><span>Comprimidos por dose</span><input id="mPor" type="number" inputmode="decimal" step="0.5" value="${med.por_dose ?? 1}"></label>
+      </div>
+      <p class="sub">Deixe o estoque vazio se não quiser controlar este remédio.</p>
       ${med.id ? `<button class="btn pequeno perigo" data-a="excluirMed" data-id="${med.id}">Remover este remédio</button>` : ""}`;
   } else if (m.tipo === "confirmar") {
     corpo = `<h2>${esc(m.titulo)}</h2><p>${esc(m.texto)}</p>`;
@@ -572,7 +664,7 @@ const ACOES = {
     await recarregar(true);
     toast("Muito bem! Tudo tomado ✅");
   },
-  modal(el) { S.modal = { tipo: el.dataset.m, momento: "jejum" }; render(); setTimeout(() => $(".modal input")?.focus(), 50); },
+  modal(el) { S.modal = { tipo: el.dataset.m, momento: el.dataset.momento || "jejum" }; render(); setTimeout(() => $(".modal input")?.focus(), 50); },
   momento(el) { S.modal.momento = el.dataset.v; document.querySelectorAll("[data-a=momento]").forEach((b) => b.classList.toggle("ativo", b === el)); },
   fechar() { S.modal = null; render(); },
   fecharFundo(el, ev) { if (ev.target === el) ACOES.fechar(); },
@@ -593,7 +685,9 @@ const ACOES = {
     } else if (m.tipo === "med") {
       const nome = $("#mNome").value.trim();
       if (!nome) return toast("Escreva o nome do remédio");
-      const dados = { nome, dose: $("#mDose").value.trim(), periodo: $("#mPer").value };
+      const est = $("#mEst").value.trim();
+      const dados = { nome, dose: $("#mDose").value.trim(), periodo: $("#mPer").value, estoque: est === "" ? null : +est.replace(",", "."), por_dose: +$("#mPor").value.replace(",", ".") || 1 };
+      if (m.foto !== undefined) dados.foto = m.foto;
       if (m.med.id) dados.id = m.med.id; else dados.ordem = S.meds.length + 100;
       await S.api.salvarMed(dados);
       toast("Remédio salvo ✅");
@@ -610,16 +704,17 @@ const ACOES = {
   async relDias(el) { S.relDias = +el.dataset.v; S.rel = null; render(); await carregarRelatorio(); render(); },
   imprimir() { window.print(); },
   async salvarCfg() {
-    const c = structuredClone(S.cfg);
-    document.querySelectorAll("[data-cfg-hora]").forEach((i) => { if (i.value) c.horarios[i.dataset.cfgHora] = i.value; });
-    document.querySelectorAll("[data-cfg]").forEach((i) => { if (i.value !== "") c[i.dataset.cfg] = +i.value; });
+    const c = lerFormCfg();
     await S.api.salvarCfg(c);
     S.cfg = c;
     toast("Ajustes salvos ✅");
     render();
   },
-  editarMed(el) { S.modal = { tipo: "med", med: { ...S.meds.find((m) => m.id === +el.dataset.id) } }; render(); },
-  novoMed(el) { S.modal = { tipo: "med", med: { periodo: el.dataset.p } }; render(); setTimeout(() => $("#mNome")?.focus(), 50); },
+  editarMed(el) { const med = { ...S.meds.find((m) => m.id === +el.dataset.id) }; S.modal = { tipo: "med", med, foto: med.foto || null }; S.modal.fotoOriginal = S.modal.foto; render(); },
+  removerFoto() { guardarCamposMed(); S.modal.foto = null; render(); },
+  async addAgenda() { const c = lerFormCfg(); c.medicoes_agenda = [...(c.medicoes_agenda || []), { tipo: "pressao", hora: "12:00" }]; await S.api.salvarCfg(c); S.cfg = c; render(); },
+  async removerAgenda(el) { const c = lerFormCfg(); c.medicoes_agenda.splice(+el.dataset.i, 1); await S.api.salvarCfg(c); S.cfg = c; toast("Horário removido"); render(); },
+  novoMed(el) { S.modal = { tipo: "med", med: { periodo: el.dataset.p, por_dose: 1 }, foto: null }; render(); setTimeout(() => $("#mNome")?.focus(), 50); },
   excluirMed(el) {
     const id = +el.dataset.id;
     S.modal = { tipo: "confirmar", titulo: "Remover remédio?", texto: "Ele sai da lista. O histórico de quando foi tomado continua guardado.", botao: "Remover", acao: () => S.api.excluirMed(id) };
@@ -667,6 +762,46 @@ const ACOES = {
     } catch (e) { toast("Erro: " + (e.message || e)); }
   },
 };
+
+function lerFormCfg() {
+  const c = structuredClone(S.cfg);
+  document.querySelectorAll("[data-cfg-hora]").forEach((i) => { if (i.value) c.horarios[i.dataset.cfgHora] = i.value; });
+  document.querySelectorAll("[data-cfg]").forEach((i) => { if (i.value !== "") c[i.dataset.cfg] = +i.value; });
+  document.querySelectorAll("[data-cfg-txt]").forEach((i) => { c[i.dataset.cfgTxt] = i.value.trim(); });
+  document.querySelectorAll("[data-cfg-bool]").forEach((i) => { c[i.dataset.cfgBool] = i.checked; });
+  const rows = document.querySelectorAll("[data-ag]");
+  if (rows.length) c.medicoes_agenda = [...rows].map((r) => {
+    const a = { tipo: $(".ag-tipo", r).value, hora: $(".ag-hora", r).value || "12:00" };
+    if (a.tipo === "glicemia") a.momento = $(".ag-momento", r).value;
+    return a;
+  });
+  return c;
+}
+
+// Guarda o que já foi digitado no formulário do remédio antes de redesenhar a tela
+function guardarCamposMed() {
+  const m = S.modal; if (!m || m.tipo !== "med") return;
+  m.med.nome = $("#mNome")?.value ?? m.med.nome; m.med.dose = $("#mDose")?.value ?? m.med.dose;
+  m.med.periodo = $("#mPer")?.value ?? m.med.periodo; m.med.estoque = $("#mEst")?.value ?? m.med.estoque; m.med.por_dose = $("#mPor")?.value ?? m.med.por_dose;
+}
+
+// Reduz a foto para ficar leve (cerca de 20 KB)
+function reduzirFoto(arquivo, lado = 360) {
+  return new Promise((ok, erro) => {
+    const url = URL.createObjectURL(arquivo);
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, lado / Math.max(img.width, img.height));
+      const cv = document.createElement("canvas");
+      cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
+      cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+      URL.revokeObjectURL(url);
+      ok(cv.toDataURL("image/jpeg", 0.72));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); erro(new Error("Não consegui ler a foto")); };
+    img.src = url;
+  });
+}
 
 function b64ToU8(b64) {
   const pad = "=".repeat((4 - (b64.length % 4)) % 4);
