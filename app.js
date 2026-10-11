@@ -153,6 +153,8 @@ const S = {
   telaRelPai: false,
   relTipo: null, // "acomp" | "medico" | "compras"
   comprasFiltro: "acabando",
+  compraSel: new Set(),
+  pdf: null,
 };
 
 /* ============================ Inicialização ============================ */
@@ -628,11 +630,16 @@ function viewRelCompras() {
     h += `<div class="cartao vazio">${S.comprasFiltro === "todos" ? "Nenhum remédio cadastrado." : "Nenhum remédio acabando. 👍"}${semControle && S.comprasFiltro !== "todos" ? `<br><span class="sub">${semControle} remédio(s) sem estoque informado não entram nesta lista — veja em "Todos os remédios".</span>` : ""}</div>`;
     return h;
   }
+  const nSel = lista.filter((m) => S.compraSel.has(m.id)).length;
+  h += `<p class="sub nao-imprimir" style="margin:0 4px 10px">Toque nos remédios que vai comprar. ${nSel ? `<b>${nSel} marcado(s)</b> — só eles vão no PDF e na mensagem.` : "Se não marcar nenhum, vão todos da lista."}</p>`;
   h += `<div class="cartao"><ul class="lista-compras">` + lista.map((m) => {
     const d = diasEstoque(m);
+    const sel = S.compraSel.has(m.id);
     const info = m.estoque == null ? `<span class="sub">estoque não informado</span>` : `<span class="${d <= lim ? "estoque-baixo" : "sub"}">${+m.estoque} comp. · dá para ${d} dia${d === 1 ? "" : "s"}</span>`;
-    return `<li><span class="quadrado"></span>${fotoHTML(m, "m-foto peq")}<span class="lc-txt"><b>${esc(m.nome)}</b> <span class="sub">${esc(m.dose || "")}</span><br>${info}</span></li>`;
+    return `<li class="${nSel && !sel ? "nao-sel" : ""}"><button class="lc-item ${sel ? "sel" : ""}" data-a="marcarCompra" data-id="${m.id}">
+      <span class="quadrado">${sel ? "✓" : ""}</span>${fotoHTML(m, "m-foto peq")}<span class="lc-txt"><b>${esc(m.nome)}</b> <span class="sub">${esc(m.dose || "")}</span><br>${info}</span></button></li>`;
   }).join("") + `</ul></div>`;
+  if (nSel) h += `<button class="btn pequeno nao-imprimir" data-a="limparCompras" style="margin-bottom:10px">Desmarcar todos</button>`;
   h += `<div class="nao-imprimir" style="display:grid;gap:10px">
     <button class="btn primario" data-a="compartilharCompras">💬 Enviar lista (WhatsApp, mensagem…)</button>
     <button class="btn" data-a="imprimir">📄 Gerar PDF / Imprimir</button></div>`;
@@ -747,6 +754,12 @@ function viewModal() {
       ${med.id ? `<button class="btn pequeno perigo" data-a="excluirMed" data-id="${med.id}">Remover este remédio</button>` : ""}`;
   } else if (m.tipo === "confirmar") {
     corpo = `<h2>${esc(m.titulo)}</h2><p>${esc(m.texto)}</p>`;
+  } else if (m.tipo === "pdf") {
+    return `<div class="fundo-modal" data-a="fecharFundo"><div class="modal" role="dialog"><h2>📄 PDF pronto</h2>
+      <p>${esc(S.pdf?.file?.name || "")}<br><span class="sub">${S.pdf?.paginas || 1} página(s)</span></p>
+      <div class="acoes"><button class="btn primario" data-a="compartilharPDF">📤 Salvar ou enviar (WhatsApp, Arquivos…)</button>
+      <a class="btn" href="${S.pdf?.url || "#"}" target="_blank" rel="noopener">👀 Abrir o PDF</a>
+      <button class="btn" data-a="fechar">Fechar</button></div></div></div>`;
   }
   const rotulo = m.tipo === "confirmar" ? m.botao : "Salvar";
   return `<div class="fundo-modal" data-a="fecharFundo"><div class="modal" role="dialog">${corpo}
@@ -820,7 +833,8 @@ const ACOES = {
   },
   comprasFiltro(el) { S.comprasFiltro = el.dataset.v; render(); },
   async compartilharCompras() {
-    const { lista } = listaCompras();
+    let { lista } = listaCompras();
+    if (lista.some((m) => S.compraSel.has(m.id))) lista = lista.filter((m) => S.compraSel.has(m.id));
     const txt = `Lista de compras${S.cfg.nome_pai ? " — " + S.cfg.nome_pai : ""}:\n` + lista.map((m) => {
       const d = diasEstoque(m);
       return `• ${m.nome}${m.dose ? " " + m.dose : ""}${m.estoque != null ? ` (restam ${+m.estoque}, ~${d} dias)` : ""}`;
@@ -832,7 +846,16 @@ const ACOES = {
   },
   async atualizar() { await recarregar(); toast("Atualizado"); },
   async relDias(el) { S.relDias = +el.dataset.v; S.rel = null; render(); await carregarRelatorio(); render(); },
-  imprimir() { window.print(); },
+  imprimir() { return gerarPDF(); },
+  marcarCompra(el) { const id = +el.dataset.id; S.compraSel.has(id) ? S.compraSel.delete(id) : S.compraSel.add(id); render(); },
+  limparCompras() { S.compraSel.clear(); render(); },
+  async compartilharPDF() {
+    const f = S.pdf?.file; if (!f) return;
+    try {
+      if (navigator.canShare && navigator.canShare({ files: [f] })) await navigator.share({ files: [f], title: f.name });
+      else window.open(S.pdf.url, "_blank");
+    } catch (e) { if (e.name !== "AbortError") window.open(S.pdf.url, "_blank"); }
+  },
   async salvarCfg() {
     const c = lerFormCfg();
     await S.api.salvarCfg(c);
@@ -931,6 +954,61 @@ function reduzirFoto(arquivo, lado = 360) {
     img.onerror = () => { URL.revokeObjectURL(url); erro(new Error("Não consegui ler a foto")); };
     img.src = url;
   });
+}
+
+/* ---------- Gerar PDF (o iPhone não deixa "imprimir" em apps da Tela de Início) ---------- */
+function carregarScript(src) {
+  return new Promise((ok, erro) => {
+    if (document.querySelector(`script[data-src="${src}"]`)) return ok();
+    const s = document.createElement("script");
+    s.src = src; s.dataset.src = src; s.onload = ok; s.onerror = () => erro(new Error("Não consegui carregar o gerador de PDF"));
+    document.head.appendChild(s);
+  });
+}
+async function gerarPDF() {
+  const nomes = { medico: "relatorio-medico", compras: "lista-de-compras", acomp: "acompanhamento" };
+  const nomeArq = `${nomes[S.relTipo] || "relatorio"}-${hoje()}.pdf`;
+  toast("Gerando o PDF…");
+  await Promise.all([carregarScript("vendor/html2canvas.min.js"), carregarScript("vendor/jspdf.umd.min.js")]);
+  window.scrollTo(0, 0);
+  document.body.classList.add("modo-pdf");
+  await new Promise((r) => setTimeout(r, 150));
+  try {
+    const el = $("main");
+    const base = el.getBoundingClientRect().top + window.scrollY;
+    const W = el.offsetWidth, total = el.scrollHeight;
+    const pageH = Math.floor(W * 277 / 190); // A4 com margens de 10 mm
+    // Pontos onde dá para cortar a página sem partir uma linha no meio
+    const cortes = [...el.querySelectorAll("tr, li, .cartao, .tiles, .rel-cab, h2, h3, .legenda, p, svg")]
+      .map((n) => Math.round(n.getBoundingClientRect().bottom + window.scrollY - base)).filter((y) => y > 0).sort((a, b) => a - b);
+    const faixas = [];
+    for (let ini = 0; ini < total - 4;) {
+      let fim = ini + pageH;
+      if (fim >= total) fim = total;
+      else { const c = cortes.filter((y) => y > ini + pageH * 0.5 && y <= fim).pop(); if (c) fim = c; }
+      faixas.push([ini, fim]); ini = fim;
+    }
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit: "mm", format: "a4" });
+    for (let i = 0; i < faixas.length; i++) {
+      const [ini, fim] = faixas[i];
+      const canvas = await window.html2canvas(el, {
+        scale: 2, backgroundColor: "#ffffff", useCORS: true, logging: false,
+        x: el.getBoundingClientRect().left + window.scrollX, y: base + ini, width: W, height: fim - ini,
+        windowWidth: Math.max(W + 40, document.documentElement.clientWidth),
+        ignoreElements: (n) => n.classList?.contains("nao-imprimir") || n.classList?.contains("abas") || n.id === "toast",
+      });
+      if (i) pdf.addPage();
+      pdf.addImage(canvas.toDataURL("image/jpeg", 0.88), "JPEG", 10, 10, 190, ((fim - ini) * 190) / W);
+    }
+    const blob = pdf.output("blob");
+    if (S.pdf?.url) URL.revokeObjectURL(S.pdf.url);
+    S.pdf = { file: new File([blob], nomeArq, { type: "application/pdf" }), url: URL.createObjectURL(blob), paginas: faixas.length };
+  } finally {
+    document.body.classList.remove("modo-pdf");
+  }
+  S.modal = { tipo: "pdf" };
+  render();
 }
 
 function b64ToU8(b64) {

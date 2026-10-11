@@ -1,6 +1,6 @@
 // Service worker: notificações com o app fechado + funcionamento básico offline
-const CACHE = "remedios-v3";
-const ARQUIVOS = ["./", "./index.html", "./app.js", "./styles.css", "./config.js", "./manifest.json", "./icon-192.png"];
+const CACHE = "remedios-v4";
+const ARQUIVOS = ["./", "./index.html", "./app.js", "./styles.css", "./config.js", "./manifest.json", "./icon-192.png", "./vendor/html2canvas.min.js", "./vendor/jspdf.umd.min.js"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ARQUIVOS)).catch(() => {}));

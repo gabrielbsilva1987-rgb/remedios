@@ -212,3 +212,17 @@ input[type=time] { -webkit-appearance: none; appearance: none; padding: 10px 8px
   .rel-cab h2 { font-size: 18pt; }
   .grafico svg { max-height: 220px; }
 }
+
+/* ---- Lista de compras clicável ---- */
+.lc-item { width: 100%; display: flex; align-items: center; gap: 12px; text-align: left; padding: 2px 0; }
+.lista-compras li { padding: 10px 0; }
+.quadrado { display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 16px; width: 30px; height: 30px; }
+.lc-item.sel .quadrado { background: var(--ok); border-color: var(--ok); }
+.lc-item.sel b { color: var(--ok); }
+
+/* ---- Modo PDF: o app desenha a página larga, em branco, sem botões ---- */
+body.modo-pdf { background: #fff; }
+body.modo-pdf main { width: 760px; max-width: 760px; padding: 0; margin: 0; }
+body.modo-pdf .nao-imprimir, body.modo-pdf .abas, body.modo-pdf .chips, body.modo-pdf #toast, body.modo-pdf .nao-sel { display: none !important; }
+body.modo-pdf .so-impressao { display: block; }
+body.modo-pdf .cartao, body.modo-pdf .tile { box-shadow: none; }
