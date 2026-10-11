@@ -1,5 +1,5 @@
 // Service worker: notificações com o app fechado + funcionamento básico offline
-const CACHE = "remedios-v6";
+const CACHE = "remedios-v7";
 const ARQUIVOS = ["./", "./index.html", "./app.js", "./styles.css", "./config.js", "./manifest.json", "./icon-192.png", "./vendor/html2canvas.min.js", "./vendor/jspdf.umd.min.js"];
 
 self.addEventListener("install", (e) => {
@@ -31,9 +31,9 @@ self.addEventListener("fetch", (e) => {
 
 self.addEventListener("push", (e) => {
   let d = {};
-  try { d = e.data ? e.data.json() : {}; } catch { d = { titulo: "Remédios", corpo: e.data ? e.data.text() : "" }; }
+  try { d = e.data ? e.data.json() : {}; } catch { d = { titulo: "ColegaMed", corpo: e.data ? e.data.text() : "" }; }
   e.waitUntil(
-    self.registration.showNotification(d.titulo || "Remédios", {
+    self.registration.showNotification(d.titulo || "ColegaMed", {
       body: d.corpo || "",
       icon: "icon-192.png",
       badge: "icon-192.png",

@@ -211,8 +211,8 @@ function telaErro(msg, e) {
 
 function telaLogin() {
   $("#app").innerHTML = `
-    <div class="logo">💊</div>
-    <h1 class="centro" style="margin:0 0 6px">Remédios</h1>
+    <img src="icon-192.png?v=4" alt="" style="display:block;width:96px;height:96px;border-radius:22px;margin:8px auto 12px;box-shadow:0 4px 14px rgba(0,0,0,.15)">
+    <h1 class="centro" style="margin:0 0 6px">ColegaMed</h1>
     <p class="centro sub">Entre com o seu e-mail e a sua senha.<br>Isso só é pedido uma vez neste celular.</p>
     <form id="fLogin" class="cartao mt">
       <label class="campo"><span>E-mail</span><input type="email" name="email" autocomplete="username" required></label>
@@ -317,7 +317,7 @@ function faixaNotificacoes() {
     return `<div class="faixa aviso"><b>Este navegador não recebe notificações</b>Use o Safari no iPhone (iOS 16.4 ou mais novo) e abra pelo ícone da Tela de Início.</div>`;
   }
   if (Notification.permission === "denied") {
-    return `<div class="faixa aviso"><b>As notificações estão bloqueadas</b>Vá em Ajustes do iPhone → Notificações → Remédios e ative "Permitir Notificações".</div>`;
+    return `<div class="faixa aviso"><b>As notificações estão bloqueadas</b>Vá em Ajustes do iPhone → Notificações → ColegaMed e ative "Permitir Notificações".</div>`;
   }
   if (Notification.permission !== "granted" || !lerLocal("push_ok", false)) {
     return `<div class="faixa info"><b>Ative os lembretes</b>${S.papel === "pai" ? "Assim o celular avisa na hora de cada remédio, mesmo bloqueado." : "Assim você é avisado quando seu pai tomar, atrasar ou medir."}

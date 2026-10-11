@@ -1,6 +1,6 @@
 {
-  "name": "Remédios do Pai",
-  "short_name": "Remédios",
+  "name": "ColegaMed",
+  "short_name": "ColegaMed",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
