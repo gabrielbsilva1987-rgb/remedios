@@ -658,6 +658,19 @@ function viewRelCompras() {
   return h;
 }
 
+/* ---------- Lista de medicamentos (usada pelo pai e pelo filho) ---------- */
+function blocoMedicamentos() {
+  let h = `<h2>Medicamentos</h2>`;
+  for (const p of PERIODOS) {
+    const meds = S.meds.filter((m) => m.periodo === p.id);
+    h += `<div class="cartao"><h3>${p.emoji} ${p.nome}</h3><ul class="lista-med">` +
+      (meds.map((m) => `<li><span class="med-linha">${fotoHTML(m, "m-foto peq")}<span><b>${esc(m.nome)}</b> <span class="sub">${esc(m.dose)}</span>${m.estoque != null ? `<br><span class="sub ${diasEstoque(m) <= (+S.cfg.estoque_dias_alerta || 7) ? "estoque-baixo" : ""}">📦 ${+m.estoque} comp. · ≈ ${diasEstoque(m)} dias</span>` : ""}</span></span>
+        <button class="icone-btn" style="width:44px;height:44px;font-size:18px" data-a="editarMed" data-id="${m.id}" aria-label="Editar">✏️</button></li>`).join("") || `<li class="vazio">Nenhum</li>`) +
+      `</ul><button class="btn pequeno mt" data-a="novoMed" data-p="${p.id}">＋ Adicionar remédio</button></div>`;
+  }
+  return h;
+}
+
 /* ---------- Ajustes ---------- */
 function viewAjustes(doPai) {
   const c = S.cfg;
@@ -667,7 +680,8 @@ function viewAjustes(doPai) {
     h += `<button class="btn mt" data-a="testarPush">🔔 Enviar notificação de teste</button>`;
 
   if (S.papel === "pai" && CONFIGURADO) {
-    h += `<h2>Remédios</h2><div class="cartao sub">A lista de remédios e os horários são ajustados pelo celular do filho.</div>`;
+    h += blocoMedicamentos();
+    h += `<p class="sub" style="margin:0 4px 14px">Toque em ✏️ para mudar ou remover um remédio. Os horários são ajustados pelo celular do filho.</p>`;
     h += `<h2>Este celular</h2><div class="cartao"><p style="margin-top:0">Conectado como <b>Pai 👴</b>${S.email ? `<br><span class="sub">${esc(S.email)}</span>` : ""}</p>
       <button class="btn pequeno perigo" data-a="sair">Sair da conta</button></div>`;
     return h;
@@ -678,14 +692,7 @@ function viewAjustes(doPai) {
     `</div><label class="campo"><span>Avisar o filho se atrasar (minutos)</span><input type="number" inputmode="numeric" data-cfg="atraso_min" value="${c.atraso_min}"></label>
     <button class="btn primario pequeno" data-a="salvarCfg">Salvar horários</button></div>`;
 
-  h += `<h2>Medicamentos</h2>`;
-  for (const p of PERIODOS) {
-    const meds = S.meds.filter((m) => m.periodo === p.id);
-    h += `<div class="cartao"><h3>${p.emoji} ${p.nome}</h3><ul class="lista-med">` +
-      (meds.map((m) => `<li><span class="med-linha">${fotoHTML(m, "m-foto peq")}<span><b>${esc(m.nome)}</b> <span class="sub">${esc(m.dose)}</span>${m.estoque != null ? `<br><span class="sub ${diasEstoque(m) <= (+S.cfg.estoque_dias_alerta || 7) ? "estoque-baixo" : ""}">📦 ${+m.estoque} comp. · ≈ ${diasEstoque(m)} dias</span>` : ""}</span></span>
-        <button class="icone-btn" style="width:44px;height:44px;font-size:18px" data-a="editarMed" data-id="${m.id}" aria-label="Editar">✏️</button></li>`).join("") || `<li class="vazio">Nenhum</li>`) +
-      `</ul><button class="btn pequeno mt" data-a="novoMed" data-p="${p.id}">＋ Adicionar remédio</button></div>`;
-  }
+  h += blocoMedicamentos();
 
   h += `<h2>Lembretes de medição</h2><div class="cartao"><p class="sub" style="margin-top:0">O pai recebe um lembrete no horário, e você é avisado se ele não medir.</p>` +
     (c.medicoes_agenda || []).map((a, i) => `<div class="ag-edit" data-ag="${i}">
